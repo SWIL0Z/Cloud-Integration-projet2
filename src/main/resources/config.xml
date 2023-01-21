@@ -1,0 +1,68 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<beans xmlns="http://www.springframework.org/schema/beans"
+       xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+       xmlns:int="http://www.springframework.org/schema/integration"
+       xmlns:int-file="http://www.springframework.org/schema/integration/file"
+       xsi:schemaLocation="http://www.springframework.org/schema/beans
+           http://www.springframework.org/schema/beans/spring-beans.xsd
+           http://www.springframework.org/schema/integration
+           http://www.springframework.org/schema/integration/spring-integration-5.1.xsd
+           http://www.springframework.org/schema/integration/file
+           http://www.springframework.org/schema/integration/file/spring-integration-file-5.1.xsd">
+
+    <!-- get data from dataIn -->
+    <int-file:inbound-channel-adapter
+            directory="dataIn"
+            filename-pattern="*.json"
+            channel="JsonInputChannel">
+        <int:poller fixed-delay="2000"/>
+    </int-file:inbound-channel-adapter>
+
+    <!-- split the single json message into multiple messages -->
+    <int-file:splitter id="splitter" apply-sequence="false" first-line-as-header="true"
+                       input-channel="JsonInputChannel" output-channel="SplittedJsonChannel"
+                       auto-startup="true"/>
+
+    <int:channel id="SplittedJsonChannel"></int:channel>
+
+    <!-- route messages based on the value of their headers -->
+    <!-- I didn't find a way to make the value field work as a regex... e.g. newUser\d+.json and newAddress\d+.json :( -->
+    <int:header-value-router id="router" input-channel="SplittedJsonChannel" header-name="file_name" resolution-required="false">
+        <int:mapping value="newUser1.json" channel="UsersInputChannel"/>
+        <int:mapping value="newUser2.json" channel="UsersInputChannel"/>
+        <int:mapping value="newAddress1.json" channel="AddressesInputChannel"/>
+        <int:mapping value="newAddress2.json" channel="AddressesInputChannel"/>
+        <int:mapping value="newAddress3.json" channel="AddressesInputChannel"/>
+    </int:header-value-router>
+
+    <int:channel id="UsersInputChannel"></int:channel>
+    <int:channel id="AddressesInputChannel"></int:channel>
+
+    <!-- convert the json objects to Java objects that will be computed afterward -->
+    <int:json-to-object-transformer input-channel="UsersInputChannel" output-channel="usersChannel" type="com.RichemeVyas.Domain.User"></int:json-to-object-transformer>
+    <int:json-to-object-transformer input-channel="AddressesInputChannel" output-channel="addressesChannel" type="com.RichemeVyas.Domain.Address"></int:json-to-object-transformer>
+
+    <int:channel id="usersChannel"></int:channel>
+    <int:channel id="addressesChannel"></int:channel>
+
+    <!-- activation of both services to register users and addresses -->
+    <int:service-activator input-channel="usersChannel" output-channel="aggregatorChannel" ref="registrationServiceID" method="addNewUser"/>
+    <bean id="registrationServiceID" class="com.RichemeVyas.Services.RegistrationService"/>
+    <int:service-activator input-channel="addressesChannel" output-channel="aggregatorChannel" ref="addressesServiceID" method="addNewAddress"/>
+    <bean id="addressesServiceID" class="com.RichemeVyas.Services.AddressesService"/>
+
+    <int:channel id="aggregatorChannel"></int:channel>
+
+    <!-- aggregation of data rteturn by both services -->
+    <int:aggregator id="myAggregator"
+                    input-channel="aggregatorChannel"
+                    output-channel="outputChannel"
+                    correlation-strategy-expression="payload.name"
+                    release-strategy-expression="size()==2">
+    </int:aggregator>
+
+    <int:channel id="outputChannel"></int:channel>
+
+    <int:logging-channel-adapter channel="outputChannel" level="INFO"/>
+
+</beans>
